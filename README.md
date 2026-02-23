@@ -59,7 +59,7 @@ cp .env.example .env
 Edit `.env`:
 
 ```
-SAS_KEY_PASSWORD=your_efirma_password
+FIEL_PASSWORD=your_efirma_password
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 ```
 

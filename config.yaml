@@ -7,7 +7,7 @@ site:
 credentials:
   cer_path: "./credentials/certificate.cer"
   key_path: "./credentials/private_key.key"
-  # password loaded from .env: SAS_KEY_PASSWORD
+  # password loaded from .env: FIEL_PASSWORD
 
 retry:
   base_interval_seconds: 300

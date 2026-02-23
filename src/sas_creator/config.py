@@ -83,7 +83,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     # Inject secrets from environment
     if "credentials" not in raw:
         raw["credentials"] = {}
-    raw["credentials"]["password"] = os.environ.get("SAS_KEY_PASSWORD", "")
+    raw["credentials"]["password"] = os.environ.get("FIEL_PASSWORD", "")
 
     if "telegram" not in raw:
         raw["telegram"] = {}
