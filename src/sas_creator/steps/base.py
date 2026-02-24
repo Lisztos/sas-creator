@@ -1,11 +1,19 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from playwright.sync_api import Page
+
+if TYPE_CHECKING:
+    from sas_creator.notifier import TelegramNotifier
+
+logger = logging.getLogger(__name__)
+
+PROGRESS_PAUSE_SECONDS = 3
 
 
 class StepStatus(Enum):
@@ -49,6 +57,11 @@ class Step(ABC):
     def execute(self, page: Page, context: dict) -> StepResult:
         """Perform the step's actions. Returns a StepResult."""
         ...
+
+    def progress(self, page: Page, message: str, context: dict) -> None:
+        """Log progress and pause so the user can see the browser."""
+        logger.info(f"[{self.name}] {message}")
+        page.wait_for_timeout(PROGRESS_PAUSE_SECONDS * 1000)
 
     def on_failure(self, page: Page, error: Exception, screenshot_dir: str = "./screenshots") -> Optional[str]:
         """Take a screenshot on failure. Returns path to screenshot."""

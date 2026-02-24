@@ -27,6 +27,11 @@ class Runner:
 
     def run(self) -> None:
         page = self.browser_mgr.get_page()
+        # Runtime context (not serialized) for steps to access notifier
+        self._runtime_context = {
+            "_notifier": self.notifier,
+            "_screenshot_dir": self.config.state.screenshot_dir,
+        }
         self.notifier.send("Bot started. Beginning automation pipeline.")
         logger.info(
             f"Pipeline has {len(self.steps)} steps: "
@@ -34,6 +39,21 @@ class Runner:
         )
 
         for step in self.steps:
+            # Check for session expiry before non-login steps
+            if step.name != "login" and self._is_session_expired(page):
+                logger.warning("Session expired! Re-running login...")
+                self.notifier.send("Session expired. Logging in again...", urgent=True)
+                self.state.completed_steps.pop("login", None)
+                self.state.save()
+                login_step = self.steps[0]
+                login_result = self._execute_step_with_retry(login_step, page)
+                if login_result.status in (StepStatus.SUCCESS, StepStatus.SKIPPED):
+                    self.state.mark_completed("login", login_result.data)
+                    self.notifier.send("Re-login successful. Continuing...")
+                else:
+                    self.notifier.send("Re-login failed.", urgent=True)
+                    break
+
             if self.state.is_step_completed(step.name):
                 logger.info(f"Step '{step.name}' already completed. Skipping.")
                 continue
@@ -86,7 +106,8 @@ class Runner:
 
                 logger.info(f"Executing step '{step.name}' (attempt {attempt})")
                 self.state.increment_attempt(step.name)
-                result = step.execute(page, self.state.context)
+                ctx = {**self.state.context, **self._runtime_context}
+                result = step.execute(page, ctx)
 
                 if result.status in (StepStatus.SUCCESS, StepStatus.NEEDS_HUMAN):
                     return result
@@ -141,6 +162,19 @@ class Runner:
                         status=StepStatus.SKIPPED,
                         message="Human completed this step during retry wait.",
                     )
+
+    def _is_session_expired(self, page) -> bool:
+        """Check if the session expired by looking for the login URL or form."""
+        try:
+            url = page.url
+            if "tuempresa" not in url and "economia.gob" not in url:
+                return False
+            # Redirect to login page means session expired
+            if "login.jsp" in url.lower() or "Login" in url:
+                return True
+            return page.locator("input[type='file']").first.is_visible(timeout=2000)
+        except Exception:
+            return False
 
     def _wait_for_human(self, step, page) -> None:
         """Wait indefinitely for a human to complete the step."""

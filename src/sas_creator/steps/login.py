@@ -26,11 +26,12 @@ class LoginStep(Step):
     def check_already_done(self, page: Page) -> bool:
         """Check if we're already past the login page.
 
-        If the login form is gone, we're already logged in.
+        Only returns True if we're on the site AND the login form is gone.
         """
         try:
-            # The login page has file inputs for .cer/.key - if those are absent,
-            # we've moved past login
+            url = page.url
+            if "tuempresa" not in url and "economia.gob" not in url:
+                return False
             return not page.locator("input[type='file']").first.is_visible(timeout=3000)
         except Exception:
             return False
@@ -39,60 +40,56 @@ class LoginStep(Step):
         cfg = self._config
 
         # 1. Navigate to the login page
-        logger.info(f"Navigating to {cfg.site.base_url}")
         page.goto(
             cfg.site.base_url,
             wait_until="domcontentloaded",
             timeout=cfg.site.navigation_timeout_ms,
         )
-
-        # 2. Wait for AJAX framework to initialize
         wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+
+        # 2. Confirm the login form is fully loaded
+        cer_input = page.locator("input[type='file']").first
+        cer_input.wait_for(state="attached", timeout=cfg.site.page_load_timeout_ms)
+        page.locator("input[type='password']").first.wait_for(
+            state="attached", timeout=cfg.site.page_load_timeout_ms
+        )
+        self.progress(page, "Login page loaded - form elements visible", context)
 
         # 3. Upload .cer certificate
-        logger.info("Uploading .cer certificate...")
-        cer_input = page.locator("input[type='file']").first
-        cer_input.wait_for(state="attached", timeout=30000)
         cer_input.set_input_files(cfg.credentials.cer_path)
-
-        # 4. Wait for RFC to auto-populate after .cer upload
-        logger.info("Waiting for RFC to auto-populate...")
-        page.wait_for_timeout(2000)  # Brief pause for AJAX
+        page.wait_for_timeout(2000)
         wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        self.progress(page, "Uploaded .cer certificate", context)
 
-        # Try to read the RFC value
+        # 3. Read RFC value
         rfc_value = ""
         try:
             rfc_inputs = page.locator("input[readonly], input[disabled]")
             for i in range(rfc_inputs.count()):
                 val = rfc_inputs.nth(i).input_value()
-                if val and len(val) >= 12:  # RFC is 12-13 chars
+                if val and len(val) >= 12:
                     rfc_value = val
                     break
         except Exception:
             logger.warning("Could not read RFC value")
 
-        # 5. Upload .key private key
-        logger.info("Uploading .key private key...")
+        # 4. Upload .key private key
         file_inputs = page.locator("input[type='file']")
-        # The second file input is for the .key
         if file_inputs.count() >= 2:
             file_inputs.nth(1).set_input_files(cfg.credentials.key_path)
         else:
-            # Fallback: find by accept attribute or nearby label
             key_input = page.locator("input[type='file'][accept='.key'], input[type='file']").last
             key_input.set_input_files(cfg.credentials.key_path)
-
         wait_for_ajax_settle(page, timeout_ms=15000)
+        self.progress(page, "Uploaded .key private key", context)
 
-        # 6. Enter password
-        logger.info("Entering password...")
+        # 5. Enter password
         pwd_input = page.locator("input[type='password']").first
         pwd_input.wait_for(state="visible", timeout=15000)
         pwd_input.fill(cfg.credentials.password)
+        self.progress(page, "Password entered", context)
 
-        # 7. Click "Ingresar" submit button
-        logger.info("Clicking Ingresar...")
+        # 6. Click "Ingresar" submit button
         submit_btn = page.locator(
             "button:has-text('Ingresar'), "
             "input[type='submit'][value='Ingresar'], "
@@ -101,12 +98,19 @@ class LoginStep(Step):
         ).first
         submit_btn.click()
 
-        # 8. Wait for navigation/AJAX response
-        logger.info("Waiting for login response...")
-        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
-        page.wait_for_timeout(3000)  # Extra buffer for slow site
+        # 7. Wait for login response - the site can take several minutes
+        #    Wait for the file inputs to disappear (meaning we left the login page)
+        try:
+            page.locator("input[type='file']").first.wait_for(
+                state="hidden", timeout=cfg.site.page_load_timeout_ms
+            )
+        except Exception:
+            pass  # Timeout - will check below
 
-        # 9. Verify login success
+        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        self.progress(page, "Login submitted, checking result...", context)
+
+        # 8. Verify login success
         if self.check_already_done(page):
             logger.info(f"Login successful! RFC: {rfc_value}")
             return StepResult(
