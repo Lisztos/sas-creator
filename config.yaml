@@ -1,12 +1,12 @@
 site:
   base_url: "https://sas-tuempresa.economia.gob.mx/sas/"
-  page_load_timeout_ms: 120000
-  ajax_settle_timeout_ms: 30000
-  navigation_timeout_ms: 120000
+  page_load_timeout_ms: 300000
+  ajax_settle_timeout_ms: 300000
+  navigation_timeout_ms: 300000
 
 credentials:
   cer_path: "./credentials/certificate.cer"
-  key_path: "./credentials/private_key.key"
+  key_path: "./credentials/private-key.key"
   # password loaded from .env: FIEL_PASSWORD
 
 retry:
@@ -18,7 +18,7 @@ retry:
 
 telegram:
   # token loaded from .env: TELEGRAM_BOT_TOKEN
-  chat_id: ""
+  chat_id: "1413270677"
   notify_on_step_success: true
   notify_on_error: true
   notify_on_human_needed: true

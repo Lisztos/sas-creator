@@ -15,19 +15,12 @@ The site is notoriously slow and error-prone. This bot automates the login and n
 
 ## Setup
 
-### 1. Install Python dependencies
+### 1. Install dependencies
 
 ```bash
 cd sas-creator
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-### 2. Install Playwright browsers
-
-```bash
-playwright install chromium
+uv sync
+uv run playwright install chromium
 ```
 
 ### 3. Add your e.firma credentials
@@ -80,8 +73,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 ### Run the bot
 
 ```bash
-source .venv/bin/activate
-python -m sas_creator
+uv run python -m sas_creator
 ```
 
 A Chrome window will open. The bot will:

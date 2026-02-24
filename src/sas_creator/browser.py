@@ -19,6 +19,7 @@ class BrowserManager:
         self._playwright = sync_playwright().start()
 
         self._context = self._playwright.chromium.launch_persistent_context(
+            channel="msedge",
             user_data_dir=self.config.user_data_dir,
             headless=self.config.headless,
             slow_mo=self.config.slow_mo_ms,
@@ -35,8 +36,8 @@ class BrowserManager:
         else:
             self._page = self._context.new_page()
 
-        self._page.set_default_timeout(120000)
-        self._page.set_default_navigation_timeout(120000)
+        self._page.set_default_timeout(300000)
+        self._page.set_default_navigation_timeout(300000)
 
         logger.info("Browser launched in headed mode with persistent context.")
         return self._page
