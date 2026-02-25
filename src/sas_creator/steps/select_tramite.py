@@ -27,10 +27,15 @@ class SelectTramiteStep(Step):
         """If we're past the tramite selection page, this step is done.
 
         Only returns True if we're on the site AND past the selection page.
+        Returns False on error pages (503, etc.) so they get retried.
         """
         try:
             url = page.url
             if "tuempresa" not in url and "economia.gob" not in url:
+                return False
+            # Don't consider error pages as "done"
+            title = page.title()
+            if any(code in title for code in ["502", "503", "504", "500", "Error", "Gateway"]):
                 return False
             has_heading = page.locator(
                 "text=Iniciar un nuevo trámite"
@@ -38,6 +43,57 @@ class SelectTramiteStep(Step):
             return not has_heading
         except Exception:
             return False
+
+    def _wait_for_processing_modal(self, page: Page, cfg) -> None:
+        """Wait for the 'Procesando...' modal to appear and then disappear.
+
+        The site shows a modal overlay while processing server requests.
+        We first wait for it to show up, then wait for it to go away.
+        The server can take 6+ minutes, so we use the full page load timeout.
+        """
+        modal_selectors = [
+            "text=Procesando",
+            ".modal:has-text('Procesando')",
+            "[class*='loading']:visible",
+            ".overlay:visible",
+            ".modal-backdrop",
+        ]
+
+        # 1. Wait briefly for the modal to appear
+        modal_appeared = False
+        for selector in modal_selectors:
+            try:
+                if page.locator(selector).first.is_visible(timeout=5000):
+                    modal_appeared = True
+                    logger.info(f"Processing modal detected ({selector})")
+                    break
+            except Exception:
+                continue
+
+        if not modal_appeared:
+            logger.info("No processing modal detected, continuing...")
+            # Still wait for page to settle even without a modal
+            try:
+                page.wait_for_load_state(
+                    "domcontentloaded", timeout=cfg.site.page_load_timeout_ms
+                )
+            except Exception:
+                pass
+            wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+            return
+
+        # 2. Wait for the modal to disappear (server is processing)
+        logger.info("Waiting for processing modal to disappear...")
+        for selector in modal_selectors:
+            try:
+                page.locator(selector).first.wait_for(
+                    state="hidden", timeout=cfg.site.page_load_timeout_ms
+                )
+            except Exception:
+                pass
+
+        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        logger.info("Processing modal gone. Page should be ready.")
 
     def execute(self, page: Page, context: dict) -> StepResult:
         cfg = self._config
@@ -63,17 +119,9 @@ class SelectTramiteStep(Step):
                 self.progress(page, f"Found pending process. Clicking retomar...", context)
                 retomar_link.click()
 
-                # The server can take 6+ minutes to respond (often 504s)
-                # Wait for the page to change - either success or error
-                try:
-                    page.wait_for_load_state(
-                        "domcontentloaded", timeout=cfg.site.page_load_timeout_ms
-                    )
-                except Exception:
-                    pass
-                wait_for_ajax_settle(
-                    page, timeout_ms=cfg.site.ajax_settle_timeout_ms
-                )
+                # Wait for the "Procesando..." modal to appear and then disappear.
+                # The server can take 6+ minutes to respond (often 504s).
+                self._wait_for_processing_modal(page, cfg)
 
                 # Check if session expired (redirected to login)
                 current_url = page.url
@@ -122,13 +170,8 @@ class SelectTramiteStep(Step):
 
         iniciar_link.click()
 
-        try:
-            page.wait_for_load_state(
-                "domcontentloaded", timeout=cfg.site.page_load_timeout_ms
-            )
-        except Exception:
-            pass
-        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        # Wait for the "Procesando..." modal to appear and disappear
+        self._wait_for_processing_modal(page, cfg)
 
         # Check if we got a server error page
         title = page.title()

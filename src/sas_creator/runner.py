@@ -32,16 +32,31 @@ class Runner:
             "_notifier": self.notifier,
             "_screenshot_dir": self.config.state.screenshot_dir,
         }
-        self.notifier.send("Bot started. Beginning automation pipeline.")
-        logger.info(
-            f"Pipeline has {len(self.steps)} steps: "
-            f"{[s.name for s in self.steps]}"
-        )
 
-        for step in self.steps:
+        # Clear stale state from previous runs — server sessions don't survive
+        # browser restarts, so persisted "completed" flags are always wrong.
+        if self.state.completed_steps:
+            logger.info(
+                f"Clearing stale state from previous run: "
+                f"{list(self.state.completed_steps.keys())}"
+            )
+            self.state.completed_steps.clear()
+            self.state.attempt_count = {}
+            self.state.save()
+
+        self.notifier.send("Bot started. Beginning automation pipeline.")
+        step_names = [s.name for s in self.steps]
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("  SAS CREATOR PIPELINE")
+        logger.info(f"  Steps: {step_names}")
+        logger.info("=" * 60)
+
+        for i, step in enumerate(self.steps, 1):
             # Check for session expiry before non-login steps
             if step.name != "login" and self._is_session_expired(page):
-                logger.warning("Session expired! Re-running login...")
+                logger.info("")
+                logger.warning("--- SESSION EXPIRED - Re-logging in ---")
                 self.notifier.send("Session expired. Logging in again...", urgent=True)
                 self.state.completed_steps.pop("login", None)
                 self.state.save()
@@ -55,25 +70,33 @@ class Runner:
                     break
 
             if self.state.is_step_completed(step.name):
-                logger.info(f"Step '{step.name}' already completed. Skipping.")
+                logger.info(f"  [{i}/{len(self.steps)}] {step.display_name} -- skipped (already done)")
                 continue
 
             self.state.current_step = step.name
             self.state.save()
 
+            logger.info("")
+            logger.info("-" * 60)
+            logger.info(f"  STEP {i}/{len(self.steps)}: {step.display_name}")
+            logger.info("-" * 60)
+
             result = self._execute_step_with_retry(step, page)
 
             if result.status == StepStatus.SUCCESS:
                 self.state.mark_completed(step.name, result.data)
+                logger.info(f"  >> OK: {result.message}")
                 self.notifier.send(
                     f"Step '{step.display_name}' completed!\n{result.message}"
                 )
             elif result.status == StepStatus.SKIPPED:
                 self.state.mark_completed(step.name, result.data)
+                logger.info(f"  >> SKIPPED (human take-over)")
                 self.notifier.send(
                     f"Step '{step.display_name}' was already done (human take-over)."
                 )
             elif result.status == StepStatus.NEEDS_HUMAN:
+                logger.warning(f"  >> NEEDS HUMAN: {result.message}")
                 self.notifier.send(
                     f"HUMAN INTERVENTION NEEDED at step "
                     f"'{step.display_name}': {result.message}",
@@ -85,8 +108,20 @@ class Runner:
                     f"Step '{step.display_name}' completed after human intervention."
                 )
 
-        self.notifier.send("All steps completed successfully!")
-        logger.info("Pipeline complete.")
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("  PIPELINE COMPLETE")
+        logger.info("=" * 60)
+        self.notifier.send(
+            "All automated steps completed! Browser is open for you to take over. "
+            "Press Ctrl+C in the terminal when you're done.",
+            urgent=True,
+        )
+        logger.info("Pipeline complete. Browser stays open. Press Ctrl+C to exit.")
+
+        # Keep the browser alive so the user can take over
+        while True:
+            time.sleep(60)
 
     def _execute_step_with_retry(self, step, page) -> StepResult:
         attempt = 0
@@ -117,7 +152,7 @@ class Runner:
             except Exception as e:
                 error_msg = str(e)
                 logger.warning(
-                    f"Step '{step.name}' failed (attempt {attempt}): {error_msg}"
+                    f"  !! FAILED (attempt {attempt}): {error_msg}"
                 )
 
                 # Take screenshot
@@ -139,16 +174,25 @@ class Runner:
                         screenshot_path=screenshot_path,
                     )
 
-                # Calculate delay with exponential backoff + jitter
-                delay = min(
-                    cfg.base_interval_seconds
-                    * (cfg.exponential_base ** (attempt - 1)),
-                    cfg.max_interval_seconds,
-                ) + random.uniform(0, cfg.jitter_seconds)
+                # Server errors (503, 502, etc.) are transient — retry quickly
+                is_server_error = any(
+                    code in error_msg
+                    for code in ["502", "503", "504", "500", "Server error", "Gateway"]
+                )
 
+                if is_server_error:
+                    delay = 30 + random.uniform(0, 10)
+                else:
+                    # Normal failures: exponential backoff + jitter
+                    delay = min(
+                        cfg.base_interval_seconds
+                        * (cfg.exponential_base ** (attempt - 1)),
+                        cfg.max_interval_seconds,
+                    ) + random.uniform(0, cfg.jitter_seconds)
+
+                retry_type = "server error, quick retry" if is_server_error else "backoff"
                 logger.info(
-                    f"Retrying step '{step.name}' in {delay:.0f}s "
-                    f"(attempt {attempt + 1})"
+                    f"  .. Retrying in {delay:.0f}s ({retry_type}, attempt {attempt + 1})"
                 )
                 self.notifier.send(
                     f"Step '{step.display_name}' failed (attempt {attempt}). "
@@ -162,6 +206,19 @@ class Runner:
                         status=StepStatus.SKIPPED,
                         message="Human completed this step during retry wait.",
                     )
+
+                # After a server error, reload the page so the next attempt
+                # doesn't run against a stale 502/503 error page
+                if is_server_error:
+                    logger.info("  .. Reloading page before retry...")
+                    try:
+                        page.goto(
+                            self.config.site.base_url,
+                            wait_until="commit",
+                            timeout=self.config.site.navigation_timeout_ms,
+                        )
+                    except Exception:
+                        logger.warning("  .. Page reload failed, will retry anyway")
 
     def _is_session_expired(self, page) -> bool:
         """Check if the session expired by looking for the login URL or form."""
