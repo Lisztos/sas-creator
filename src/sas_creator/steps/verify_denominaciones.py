@@ -1,4 +1,5 @@
 import logging
+import tempfile
 
 from playwright.sync_api import Page
 
@@ -89,17 +90,16 @@ class VerifyDenominacionesStep(Step):
         wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
         logger.info("Processing modal gone.")
 
-    def _check_for_errors(self, page: Page) -> str | None:
+    def _check_for_errors(self, page: Page, server_errors: list[tuple[int, str]] | None = None) -> str | None:
         """Check for server errors or session expiry. Returns error message or None."""
         url = page.url
         if "login.jsp" in url.lower() or "Login" in url:
             return "Session expired (redirected to login)."
 
-        title = page.title()
-        content = page.content()
-        for code in ["504", "502", "503", "500", "Gateway Time-out", "Bad Gateway", "Server Error"]:
-            if code in title or code in content:
-                return f"Server error: {title}"
+        # Check actual HTTP 5xx responses captured during the action
+        if server_errors:
+            status_code, err_url = server_errors[0]
+            return f"Server error {status_code}"
         return None
 
     def _click_continuar_until_advanced(
@@ -124,10 +124,11 @@ class VerifyDenominacionesStep(Step):
                 return f"Could not find '{label}' Continuar button."
 
             logger.info(f"Clicking '{label}' Continuar (attempt {attempt})...")
-            continuar_btn.click()
-            self._wait_for_processing_modal(page)
+            with self.capture_server_errors(page) as server_errors:
+                continuar_btn.click()
+                self._wait_for_processing_modal(page)
 
-            error = self._check_for_errors(page)
+            error = self._check_for_errors(page, server_errors)
             if error:
                 return f"After {label} Continuar: {error}"
 
@@ -167,6 +168,9 @@ class VerifyDenominacionesStep(Step):
             self.progress(page, "First Continuar completed", context)
 
         # --- Second Continuar: "tienes denominaciones disponibles" ---
+        # Wait for AJAX/JS to render the second screen content
+        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+
         second_marker = "tienes denominaciones disponibles"
         second_msg = page.locator(f"text={second_marker}")
         try:
@@ -183,7 +187,18 @@ class VerifyDenominacionesStep(Step):
 
             self.progress(page, "Second Continuar completed", context)
         else:
-            logger.warning("Second Continuar screen not found - may have been skipped")
+            return StepResult(
+                status=StepStatus.FAILED,
+                message="Second Continuar screen not found after waiting for JS to render.",
+            )
+
+        # Dump page source so we can inspect the next (unknown) screen
+        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", prefix="next_screen_", delete=False
+        ) as f:
+            f.write(page.content())
+            logger.info(f"Next screen HTML saved to {f.name}")
 
         return StepResult(
             status=StepStatus.SUCCESS,

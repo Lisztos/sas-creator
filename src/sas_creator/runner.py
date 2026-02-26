@@ -33,18 +33,20 @@ class Runner:
             "_screenshot_dir": self.config.state.screenshot_dir,
         }
 
-        # Clear stale state from previous runs — server sessions don't survive
-        # browser restarts, so persisted "completed" flags are always wrong.
-        if self.state.completed_steps:
-            logger.info(
-                f"Clearing stale state from previous run: "
-                f"{list(self.state.completed_steps.keys())}"
-            )
-            self.state.completed_steps.clear()
-            self.state.attempt_count = {}
-            self.state.save()
+        # Always start fresh — navigate to login page immediately
+        self.state.completed_steps.clear()
+        self.state.attempt_count = {}
+        self.state.save()
 
-        logger.info("Bot started. Beginning automation pipeline.")
+        logger.info("Bot started. Navigating to login page...")
+        try:
+            page.goto(
+                self.config.site.base_url,
+                wait_until="commit",
+                timeout=self.config.site.navigation_timeout_ms,
+            )
+        except Exception:
+            logger.warning("Initial navigation failed, will retry in login step")
         step_names = [s.name for s in self.steps]
         logger.info("")
         logger.info("=" * 60)
@@ -113,9 +115,6 @@ class Runner:
                 if result.status == StepStatus.SUCCESS:
                     self.state.mark_completed(step.name, result.data)
                     logger.info(f"  >> OK: {result.message}")
-                    self.notifier.send(
-                        f"Step '{step.display_name}' completed!\n{result.message}"
-                    )
                 elif result.status == StepStatus.SKIPPED:
                     self.state.mark_completed(step.name, result.data)
                     logger.info(f"  >> SKIPPED (human take-over)")
@@ -249,15 +248,37 @@ class Runner:
                 # After a server error, reload the page so the next attempt
                 # doesn't run against a stale 502/503 error page
                 if is_server_error:
-                    logger.info("  .. Reloading page before retry...")
-                    try:
-                        page.goto(
-                            self.config.site.base_url,
-                            wait_until="commit",
-                            timeout=self.config.site.navigation_timeout_ms,
+                    self._reload_until_ok(page)
+
+                    # Reload may have landed on login (session expired)
+                    if step.name != "login" and self._is_session_expired(page):
+                        logger.warning("  !! Session expired after reload")
+                        return StepResult(
+                            status=StepStatus.FAILED,
+                            message="Session expired after server error reload.",
+                            data={"session_expired": True},
                         )
-                    except Exception:
-                        logger.warning("  .. Page reload failed, will retry anyway")
+
+    def _reload_until_ok(self, page, max_reloads: int = 5) -> None:
+        """Reload the page until we get a non-5xx response."""
+        for i in range(1, max_reloads + 1):
+            logger.info(f"  .. Reloading page before retry (reload {i}/{max_reloads})...")
+            try:
+                response = page.goto(
+                    self.config.site.base_url,
+                    wait_until="commit",
+                    timeout=self.config.site.navigation_timeout_ms,
+                )
+                if response and response.status >= 500:
+                    logger.warning(f"  .. Reload got {response.status}, retrying in 10s...")
+                    page.wait_for_timeout(10000)
+                    continue
+                logger.info("  .. Reload OK")
+                return
+            except Exception:
+                logger.warning(f"  .. Reload failed (attempt {i}), retrying in 10s...")
+                page.wait_for_timeout(10000)
+        logger.warning("  .. All reload attempts got errors, proceeding anyway")
 
     def _is_session_expired(self, page) -> bool:
         """Check if the session expired by looking for the login URL or form."""

@@ -124,36 +124,7 @@ class LoginStep(Step):
         page.wait_for_timeout(1000)
         self.progress(page, "Password entered", context)
 
-        # 6. Intercept $.notify() calls and console errors before submitting.
-        #    The site uses $.notify() to show validation messages, but the plugin
-        #    sometimes fails to load ("$.notify is not a function").  We patch it
-        #    so the message is captured even when the plugin is broken.
-        page.evaluate("""() => {
-            window.__capturedNotifications = [];
-            window.__consoleErrors = [];
-
-            // Patch $.notify if jQuery is available
-            if (window.jQuery) {
-                jQuery.notify = function(msg, opts) {
-                    var text = (typeof msg === 'string') ? msg : JSON.stringify(msg);
-                    var type = (opts && opts.type) ? opts.type : 'unknown';
-                    window.__capturedNotifications.push({text: text, type: type});
-                    console.warn('[intercepted $.notify] ' + type + ': ' + text);
-                };
-                jQuery.fn.notify = jQuery.notify;
-            }
-
-            // Capture console.error calls
-            var _origError = console.error;
-            console.error = function() {
-                var msg = Array.prototype.slice.call(arguments).join(' ');
-                window.__consoleErrors.push(msg);
-                _origError.apply(console, arguments);
-            };
-        }""")
-        self.progress(page, "Notification interceptor installed", context)
-
-        # 7. Click "Ingresar" submit button
+        # 6. Click "Ingresar" submit button
         page.wait_for_timeout(1000)  # Let the page settle before clicking
 
         submit_btn = page.locator(
@@ -188,35 +159,13 @@ class LoginStep(Step):
         wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
         self.progress(page, "Login submitted, checking result...", context)
 
-        # 9. Read intercepted notifications and console errors
-        intercepted = page.evaluate("""() => ({
-            notifications: window.__capturedNotifications || [],
-            errors: window.__consoleErrors || [],
-        })""")
-
-        captured_msgs = intercepted.get("notifications", [])
-        console_errors = intercepted.get("errors", [])
-
-        if captured_msgs:
-            msgs_text = "; ".join(n["text"] for n in captured_msgs)
-            logger.warning(f"Intercepted site notifications: {msgs_text}")
-        if console_errors:
-            logger.warning(f"Console errors: {'; '.join(console_errors[:5])}")
-
-        # 10. Verify login success
+        # 7. Verify login success
         if self.check_already_done(page):
             logger.info(f"Login successful! RFC: {rfc_value}")
             return StepResult(
                 status=StepStatus.SUCCESS,
                 message=f"Logged in successfully. RFC: {rfc_value}",
                 data={"rfc": rfc_value},
-            )
-
-        # Build failure detail from intercepted messages
-        failure_detail = ""
-        if captured_msgs:
-            failure_detail = "Site message: " + "; ".join(
-                n["text"] for n in captured_msgs
             )
 
         # Check for error messages in the DOM
@@ -235,7 +184,7 @@ class LoginStep(Step):
                     error_text = el.text_content()
                     return StepResult(
                         status=StepStatus.FAILED,
-                        message=f"Login failed. DOM error: {error_text}. {failure_detail}",
+                        message=f"Login failed. DOM error: {error_text}",
                     )
             except Exception:
                 continue
@@ -245,14 +194,7 @@ class LoginStep(Step):
         if any(code in title for code in ["502", "503", "500", "Error"]):
             return StepResult(
                 status=StepStatus.FAILED,
-                message=f"Server error page: {title}. {failure_detail}",
-            )
-
-        # If we captured notifications, report them even if no DOM error found
-        if failure_detail:
-            return StepResult(
-                status=StepStatus.FAILED,
-                message=f"Login did not succeed. {failure_detail}",
+                message=f"Server error page: {title}",
             )
 
         return StepResult(

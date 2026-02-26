@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -62,6 +63,31 @@ class Step(ABC):
         """Log progress and pause so the user can see the browser."""
         logger.info(f"[{self.name}] {message}")
         page.wait_for_timeout(PROGRESS_PAUSE_SECONDS * 1000)
+
+    @contextmanager
+    def capture_server_errors(self, page: Page):
+        """Track 5xx HTTP responses during an action.
+
+        Usage::
+
+            with self.capture_server_errors(page) as errors:
+                button.click()
+                self._wait_for_modal(page)
+            if errors:
+                # errors is a list of (status_code, url) tuples
+                ...
+        """
+        errors: list[tuple[int, str]] = []
+
+        def _on_response(response):
+            if response.status >= 500:
+                errors.append((response.status, response.url))
+
+        page.on("response", _on_response)
+        try:
+            yield errors
+        finally:
+            page.remove_listener("response", _on_response)
 
     def on_failure(self, page: Page, error: Exception, screenshot_dir: str = "./screenshots") -> Optional[str]:
         """Take a screenshot on failure. Returns path to screenshot."""

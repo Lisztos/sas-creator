@@ -113,11 +113,10 @@ class SelectTramiteStep(Step):
                     pass
 
                 self.progress(page, f"Found pending process. Clicking retomar...", context)
-                retomar_link.click()
 
-                # Wait for the "Procesando..." modal to appear and then disappear.
-                # The server can take 6+ minutes to respond (often 504s).
-                self._wait_for_processing_modal(page, cfg)
+                with self.capture_server_errors(page) as server_errors:
+                    retomar_link.click()
+                    self._wait_for_processing_modal(page, cfg)
 
                 # Check if session expired (redirected to login)
                 current_url = page.url
@@ -127,16 +126,12 @@ class SelectTramiteStep(Step):
                         message="Session expired after clicking retomar (redirected to login).",
                     )
 
-                # Check if we got a 504/502 error page
-                title = page.title()
-                content = page.content()
-                if any(code in title + content for code in [
-                    "504", "502", "503", "500",
-                    "Gateway Time-out", "Bad Gateway", "Server Error",
-                ]):
+                # Check for actual 5xx HTTP responses (not page content)
+                if server_errors:
+                    status_code, url = server_errors[0]
                     return StepResult(
                         status=StepStatus.FAILED,
-                        message=f"Server error after clicking retomar: {title}",
+                        message=f"Server error {status_code} after clicking retomar",
                     )
 
                 self.progress(page, "Resumed pending process", context)
@@ -164,21 +159,16 @@ class SelectTramiteStep(Step):
                 message="Could not find 'iniciar' link for SAS constitution.",
             )
 
-        iniciar_link.click()
+        with self.capture_server_errors(page) as server_errors:
+            iniciar_link.click()
+            self._wait_for_processing_modal(page, cfg)
 
-        # Wait for the "Procesando..." modal to appear and disappear
-        self._wait_for_processing_modal(page, cfg)
-
-        # Check if we got a server error page
-        title = page.title()
-        content = page.content()
-        if any(code in title + content for code in [
-            "504", "502", "503", "500",
-            "Gateway Time-out", "Bad Gateway", "Server Error",
-        ]):
+        # Check for actual 5xx HTTP responses (not page content)
+        if server_errors:
+            status_code, url = server_errors[0]
             return StepResult(
                 status=StepStatus.FAILED,
-                message=f"Server error after clicking iniciar: {title}",
+                message=f"Server error {status_code} after clicking iniciar",
             )
 
         self.progress(page, "Started new SAS constitution process", context)
