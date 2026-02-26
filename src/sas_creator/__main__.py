@@ -52,10 +52,8 @@ def main() -> None:
         runner.run()
     except KeyboardInterrupt:
         logger.info("Interrupted by user. State has been saved.")
-        runner.notifier.send("Bot stopped by user (Ctrl+C).")
     except Exception as e:
         logger.exception(f"Fatal error: {e}")
-        runner.notifier.send(f"Bot crashed: {e}", urgent=True)
         sys.exit(1)
     finally:
         runner.browser_mgr.close()

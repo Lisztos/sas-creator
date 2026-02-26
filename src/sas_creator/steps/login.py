@@ -1,6 +1,4 @@
-import base64
 import logging
-from pathlib import Path
 
 from playwright.sync_api import Page
 
@@ -28,47 +26,19 @@ class LoginStep(Step):
     def check_already_done(self, page: Page) -> bool:
         """Check if we're already past the login page.
 
-        Only returns True if we're on the site AND the login form is gone.
-        Returns False on error pages (503, etc.) so they get retried.
+        Only returns True if we can positively confirm post-login content
+        is visible (e.g. the tramite selection page).
         """
         try:
             url = page.url
             if "tuempresa" not in url and "economia.gob" not in url:
                 return False
-            # Don't consider error pages as "done"
-            title = page.title()
-            if any(code in title for code in ["502", "503", "504", "500", "Error", "Gateway"]):
-                return False
-            return not page.locator("input[type='file']").first.is_visible(timeout=3000)
+            # Positive signal: post-login content is visible
+            has_tramite = page.locator("text=Iniciar un nuevo trámite").is_visible(timeout=3000)
+            has_retomar = page.locator("a:has-text('retomar')").first.is_visible(timeout=1000)
+            return has_tramite or has_retomar
         except Exception:
             return False
-
-    def _upload_file_via_js(
-        self, page: Page, input_selector: str, file_path: str, mime_type: str = "application/octet-stream"
-    ) -> None:
-        """Upload a file by building a real File object via DataTransfer and triggering jQuery events."""
-        file_b64 = base64.b64encode(Path(file_path).read_bytes()).decode("ascii")
-        file_name = Path(file_path).name
-
-        page.evaluate("""([selector, b64Data, fileName, mimeType]) => {
-            const binaryString = atob(b64Data);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            const file = new File([bytes.buffer], fileName, { type: mimeType });
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            const input = document.querySelector(selector);
-            input.files = dt.files;
-
-            // Native events
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-
-            // jQuery events (critical for WebRatio sites)
-            if (window.jQuery) { jQuery(input).trigger('change'); }
-        }""", [input_selector, file_b64, file_name, mime_type])
 
     def execute(self, page: Page, context: dict) -> StepResult:
         cfg = self._config
@@ -107,14 +77,10 @@ class LoginStep(Step):
         )
         self.progress(page, "Login page loaded - form elements visible", context)
 
-        # 3. Upload .cer certificate via DataTransfer + jQuery trigger
-        file_inputs = page.locator("input[type='file']")
-        cer_selector = "input[type='file']:nth-of-type(1)"
-        # Use a more robust selector: get the actual element's ID if available
-        cer_id = cer_input.evaluate("el => el.id")
-        if cer_id:
-            cer_selector = f"#{cer_id}"
-        self._upload_file_via_js(page, cer_selector, cfg.credentials.cer_path)
+        # 3. Upload .cer certificate via file chooser
+        with page.expect_file_chooser() as fc_info:
+            cer_input.click()
+        fc_info.value.set_files(cfg.credentials.cer_path)
         page.wait_for_timeout(3000)
         wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
         self.progress(page, "Uploaded .cer certificate", context)
@@ -136,18 +102,15 @@ class LoginStep(Step):
         else:
             logger.warning("RFC not populated - site may not have processed the .cer file")
 
-        # 5. Upload .key private key via DataTransfer + jQuery trigger
+        # 5. Upload .key private key via file chooser
+        file_inputs = page.locator("input[type='file']")
         if file_inputs.count() >= 2:
             key_input = file_inputs.nth(1)
         else:
             key_input = page.locator("input[type='file'][accept='.key'], input[type='file']").last
-        key_id = key_input.evaluate("el => el.id")
-        if key_id:
-            key_selector = f"#{key_id}"
-        else:
-            # Fallback: use nth-of-type for the second file input
-            key_selector = "input[type='file']:nth-of-type(2)"
-        self._upload_file_via_js(page, key_selector, cfg.credentials.key_path)
+        with page.expect_file_chooser() as fc_info:
+            key_input.click()
+        fc_info.value.set_files(cfg.credentials.key_path)
         page.wait_for_timeout(2000)
         wait_for_ajax_settle(page, timeout_ms=15000)
         self.progress(page, "Uploaded .key private key", context)
@@ -156,9 +119,9 @@ class LoginStep(Step):
         pwd_input = page.locator("input[type='password']").first
         pwd_input.wait_for(state="visible", timeout=15000)
         pwd_input.fill(cfg.credentials.password)
-        # Click outside to trigger blur/change events (jQuery handlers need this)
+        # Click outside to trigger blur/change, then wait before submitting
         page.locator("body").click(position={"x": 0, "y": 0})
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(1000)
         self.progress(page, "Password entered", context)
 
         # 6. Intercept $.notify() calls and console errors before submitting.
@@ -191,6 +154,8 @@ class LoginStep(Step):
         self.progress(page, "Notification interceptor installed", context)
 
         # 7. Click "Ingresar" submit button
+        page.wait_for_timeout(1000)  # Let the page settle before clicking
+
         submit_btn = page.locator(
             "button:has-text('Ingresar'), "
             "input[type='submit'][value='Ingresar'], "
