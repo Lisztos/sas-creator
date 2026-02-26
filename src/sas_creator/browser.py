@@ -29,6 +29,7 @@ class BrowserManager:
             },
             locale="es-MX",
             timezone_id="America/Mexico_City",
+            args=["--auto-open-devtools-for-tabs"],
         )
 
         if self._context.pages:

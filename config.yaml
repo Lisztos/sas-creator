@@ -27,8 +27,8 @@ telegram:
 browser:
   headless: false
   slow_mo_ms: 100
-  viewport_width: 1280
-  viewport_height: 900
+  viewport_width: 900
+  viewport_height: 600
   user_data_dir: "./browser_data"
 
 state:
