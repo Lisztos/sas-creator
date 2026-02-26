@@ -44,7 +44,7 @@ class Runner:
             self.state.attempt_count = {}
             self.state.save()
 
-        self.notifier.send("Bot started. Beginning automation pipeline.")
+        logger.info("Bot started. Beginning automation pipeline.")
         step_names = [s.name for s in self.steps]
         logger.info("")
         logger.info("=" * 60)
@@ -52,61 +52,94 @@ class Runner:
         logger.info(f"  Steps: {step_names}")
         logger.info("=" * 60)
 
-        for i, step in enumerate(self.steps, 1):
-            # Check for session expiry before non-login steps
-            if step.name != "login" and self._is_session_expired(page):
-                logger.info("")
-                logger.warning("--- SESSION EXPIRED - Re-logging in ---")
-                self.notifier.send("Session expired. Logging in again...", urgent=True)
-                self.state.completed_steps.pop("login", None)
+        while True:
+            restarting = False
+
+            for i, step in enumerate(self.steps, 1):
+                # Check for session expiry before non-login steps
+                if step.name != "login" and self._is_session_expired(page):
+                    logger.info("")
+                    logger.warning("--- SESSION EXPIRED - Re-logging in ---")
+                    logger.warning("Session expired. Logging in again...")
+
+                    # Clear ALL state — after re-login we must redo every step
+                    self.state.completed_steps.clear()
+                    self.state.attempt_count.clear()
+                    self.state.save()
+
+                    login_step = self.steps[0]
+                    login_result = self._execute_step_with_retry(login_step, page)
+                    if login_result.status in (StepStatus.SUCCESS, StepStatus.SKIPPED):
+                        self.state.mark_completed("login", login_result.data)
+                        logger.info("Re-login successful. Restarting pipeline...")
+                        restarting = True
+                        break  # break inner for-loop, restart from step 1
+                    else:
+                        self.notifier.send("Re-login failed.", urgent=True)
+                        restarting = False
+                        break
+
+                if self.state.is_step_completed(step.name):
+                    logger.info(f"  [{i}/{len(self.steps)}] {step.display_name} -- skipped (already done)")
+                    continue
+
+                self.state.current_step = step.name
                 self.state.save()
-                login_step = self.steps[0]
-                login_result = self._execute_step_with_retry(login_step, page)
-                if login_result.status in (StepStatus.SUCCESS, StepStatus.SKIPPED):
-                    self.state.mark_completed("login", login_result.data)
-                    self.notifier.send("Re-login successful. Continuing...")
-                else:
-                    self.notifier.send("Re-login failed.", urgent=True)
-                    break
 
-            if self.state.is_step_completed(step.name):
-                logger.info(f"  [{i}/{len(self.steps)}] {step.display_name} -- skipped (already done)")
-                continue
+                logger.info("")
+                logger.info("-" * 60)
+                logger.info(f"  STEP {i}/{len(self.steps)}: {step.display_name}")
+                logger.info("-" * 60)
 
-            self.state.current_step = step.name
-            self.state.save()
+                result = self._execute_step_with_retry(step, page)
 
-            logger.info("")
-            logger.info("-" * 60)
-            logger.info(f"  STEP {i}/{len(self.steps)}: {step.display_name}")
-            logger.info("-" * 60)
+                # Session expired mid-step — re-login and restart pipeline
+                if result.data.get("session_expired"):
+                    logger.warning("--- SESSION EXPIRED MID-STEP - Re-logging in ---")
+                    self.state.completed_steps.clear()
+                    self.state.attempt_count.clear()
+                    self.state.save()
+                    login_step = self.steps[0]
+                    login_result = self._execute_step_with_retry(login_step, page)
+                    if login_result.status in (StepStatus.SUCCESS, StepStatus.SKIPPED):
+                        self.state.mark_completed("login", login_result.data)
+                        logger.info("Re-login successful. Restarting pipeline...")
+                        restarting = True
+                        break
+                    else:
+                        self.notifier.send("Re-login failed.", urgent=True)
+                        break
 
-            result = self._execute_step_with_retry(step, page)
+                if result.status == StepStatus.SUCCESS:
+                    self.state.mark_completed(step.name, result.data)
+                    logger.info(f"  >> OK: {result.message}")
+                    self.notifier.send(
+                        f"Step '{step.display_name}' completed!\n{result.message}"
+                    )
+                elif result.status == StepStatus.SKIPPED:
+                    self.state.mark_completed(step.name, result.data)
+                    logger.info(f"  >> SKIPPED (human take-over)")
+                elif result.status == StepStatus.NEEDS_HUMAN:
+                    logger.warning(f"  >> NEEDS HUMAN: {result.message}")
+                    self.notifier.send(
+                        f"HUMAN INTERVENTION NEEDED at step "
+                        f"'{step.display_name}': {result.message}",
+                        urgent=True,
+                    )
+                    self._wait_for_human(step, page)
+                    self.state.mark_completed(step.name)
+                    self.notifier.send(
+                        f"Step '{step.display_name}' completed after human intervention."
+                    )
 
-            if result.status == StepStatus.SUCCESS:
-                self.state.mark_completed(step.name, result.data)
-                logger.info(f"  >> OK: {result.message}")
-                self.notifier.send(
-                    f"Step '{step.display_name}' completed!\n{result.message}"
-                )
-            elif result.status == StepStatus.SKIPPED:
-                self.state.mark_completed(step.name, result.data)
-                logger.info(f"  >> SKIPPED (human take-over)")
-                self.notifier.send(
-                    f"Step '{step.display_name}' was already done (human take-over)."
-                )
-            elif result.status == StepStatus.NEEDS_HUMAN:
-                logger.warning(f"  >> NEEDS HUMAN: {result.message}")
-                self.notifier.send(
-                    f"HUMAN INTERVENTION NEEDED at step "
-                    f"'{step.display_name}': {result.message}",
-                    urgent=True,
-                )
-                self._wait_for_human(step, page)
-                self.state.mark_completed(step.name)
-                self.notifier.send(
-                    f"Step '{step.display_name}' completed after human intervention."
-                )
+            if restarting:
+                logger.info("")
+                logger.info("=" * 60)
+                logger.info("  RESTARTING PIPELINE (after re-login)")
+                logger.info("=" * 60)
+                continue  # restart the while loop
+
+            break  # all steps done or unrecoverable failure
 
         logger.info("")
         logger.info("=" * 60)
@@ -155,13 +188,19 @@ class Runner:
                     f"  !! FAILED (attempt {attempt}): {error_msg}"
                 )
 
+                # Check if we got redirected to the login page (session expired)
+                if step.name != "login" and self._is_session_expired(page):
+                    logger.warning("  !! Redirected to login page — session expired")
+                    return StepResult(
+                        status=StepStatus.FAILED,
+                        message="Session expired (redirected to login page).",
+                        data={"session_expired": True},
+                    )
+
                 # Take screenshot
                 screenshot_path = step.on_failure(
                     page, e, self.config.state.screenshot_dir
                 )
-
-                # Notify
-                self.notifier.send_error(step.display_name, error_msg, screenshot_path)
 
                 # Check max attempts
                 if 0 < cfg.max_attempts <= attempt:
@@ -181,7 +220,7 @@ class Runner:
                 )
 
                 if is_server_error:
-                    delay = 30 + random.uniform(0, 10)
+                    delay = 15 + random.uniform(0, 5)
                 else:
                     # Normal failures: exponential backoff + jitter
                     delay = min(
@@ -194,8 +233,8 @@ class Runner:
                 logger.info(
                     f"  .. Retrying in {delay:.0f}s ({retry_type}, attempt {attempt + 1})"
                 )
-                self.notifier.send(
-                    f"Step '{step.display_name}' failed (attempt {attempt}). "
+                logger.info(
+                    f"  Step '{step.display_name}' failed (attempt {attempt}). "
                     f"Retrying in {delay:.0f}s..."
                 )
 

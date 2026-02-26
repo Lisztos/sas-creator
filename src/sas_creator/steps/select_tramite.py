@@ -26,21 +26,17 @@ class SelectTramiteStep(Step):
     def check_already_done(self, page: Page) -> bool:
         """If we're past the tramite selection page, this step is done.
 
-        Only returns True if we're on the site AND past the selection page.
-        Returns False on error pages (503, etc.) so they get retried.
+        Only returns True if we can positively confirm post-selection content
+        is visible (e.g. the denominaciones verification screens or later).
         """
         try:
             url = page.url
             if "tuempresa" not in url and "economia.gob" not in url:
                 return False
-            # Don't consider error pages as "done"
-            title = page.title()
-            if any(code in title for code in ["502", "503", "504", "500", "Error", "Gateway"]):
-                return False
-            has_heading = page.locator(
-                "text=Iniciar un nuevo trámite"
-            ).is_visible(timeout=3000)
-            return not has_heading
+            # Positive signals: content from steps after tramite selection
+            has_denom = page.locator("text=denominaciones disponibles").is_visible(timeout=3000)
+            has_continuar = page.locator("button:has-text('Continuar'), a:has-text('Continuar')").first.is_visible(timeout=1000)
+            return has_denom or has_continuar
         except Exception:
             return False
 

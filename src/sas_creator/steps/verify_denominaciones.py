@@ -26,22 +26,22 @@ class VerifyDenominacionesStep(Step):
     def check_already_done(self, page: Page) -> bool:
         """If we're past both Continuar screens, this step is done.
 
-        Returns False on error pages (503, etc.) so they get retried.
+        Only returns True if we can positively confirm post-verification
+        content is visible (content that appears after both Continuar clicks).
         """
         try:
             url = page.url
             if "tuempresa" not in url and "economia.gob" not in url:
                 return False
-            # Don't consider error pages as "done"
-            title = page.title()
-            if any(code in title for code in ["502", "503", "504", "500", "Error", "Gateway"]):
-                return False
-            # If neither of the two known messages is visible, we've moved past them
+            # Still on one of the Continuar screens — not done
             has_first = page.locator("text=verificaremos que tengas denominaciones disponibles").is_visible(timeout=3000)
             has_second = page.locator("text=tienes denominaciones disponibles").is_visible(timeout=2000)
             if has_first or has_second:
                 return False
-            return True
+            # Positive signal: form/content that appears after the verification screens
+            # The next stage typically has form fields for the SAS constitution
+            has_form = page.locator("input[type='text'], textarea, select").first.is_visible(timeout=2000)
+            return has_form
         except Exception:
             return False
 
@@ -49,7 +49,9 @@ class VerifyDenominacionesStep(Step):
         """Wait for the 'Procesando...' modal to appear and disappear."""
         cfg = self._config
         modal_selectors = [
+            "text=Verificando denominaciones",
             "text=Procesando",
+            ".modal:has-text('Verificando')",
             ".modal:has-text('Procesando')",
             ".modal-backdrop",
         ]
