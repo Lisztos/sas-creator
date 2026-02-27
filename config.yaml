@@ -10,10 +10,10 @@ credentials:
   # password loaded from .env: FIEL_PASSWORD
 
 retry:
-  base_interval_seconds: 300
-  max_interval_seconds: 1800
+  base_interval_seconds: 15
+  max_interval_seconds: 120
   exponential_base: 2
-  jitter_seconds: 30
+  jitter_seconds: 5
   max_attempts: 0  # 0 = infinite
 
 telegram:

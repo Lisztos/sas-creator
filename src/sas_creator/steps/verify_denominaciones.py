@@ -36,7 +36,7 @@ class VerifyDenominacionesStep(Step):
                 return False
             # Still on one of the Continuar screens — not done
             has_first = page.locator("text=verificaremos que tengas denominaciones disponibles").is_visible(timeout=3000)
-            has_second = page.locator("text=tienes denominaciones disponibles").is_visible(timeout=2000)
+            has_second = page.locator("text=disponibles").is_visible(timeout=2000)
             if has_first or has_second:
                 return False
             # Positive signal: form/content that appears after the verification screens
@@ -114,7 +114,6 @@ class VerifyDenominacionesStep(Step):
         Returns an error message string, or None on success.
         """
         cfg = self._config
-        marker_locator = page.locator(f"text={screen_marker}")
 
         for attempt in range(1, max_retries + 1):
             continuar_btn = page.locator(
@@ -133,7 +132,8 @@ class VerifyDenominacionesStep(Step):
                 return f"After {label} Continuar: {error}"
 
             # Check if we actually advanced past this screen
-            if not marker_locator.is_visible(timeout=3000):
+            body_text = page.locator("body").inner_text().lower()
+            if screen_marker not in body_text:
                 logger.info(f"'{label}' screen is gone - advanced successfully.")
                 return None
 
@@ -168,17 +168,32 @@ class VerifyDenominacionesStep(Step):
             self.progress(page, "First Continuar completed", context)
 
         # --- Second Continuar: "tienes denominaciones disponibles" ---
-        # Wait for AJAX/JS to render the second screen content
-        wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
+        # The text is rendered by JS after the first Continuar completes.
+        # Check page text directly with Python (more robust than Playwright's
+        # text= locator, which fails when words span multiple HTML elements).
+        # NOTE: the site has a typo — "denonimaciones" instead of "denominaciones"
+        second_marker = "disponibles"
+        found_second = False
 
-        second_marker = "tienes denominaciones disponibles"
-        second_msg = page.locator(f"text={second_marker}")
-        try:
-            second_msg.wait_for(state="visible", timeout=cfg.site.page_load_timeout_ms)
-        except Exception:
-            pass
+        for poll in range(1, 6):
+            wait_for_ajax_settle(page, timeout_ms=cfg.site.ajax_settle_timeout_ms)
 
-        if second_msg.is_visible(timeout=3000):
+            # Fail fast on browser-level errors (connection timeout, etc.)
+            browser_err = self.is_browser_error(page)
+            if browser_err:
+                return StepResult(
+                    status=StepStatus.FAILED,
+                    message=f"Browser error on second Continuar screen: {browser_err}",
+                )
+
+            body_text = page.locator("body").inner_text()
+            if second_marker in body_text.lower():
+                found_second = True
+                break
+            logger.info(f"Second screen poll {poll}/5 - not found yet. Page text: {body_text[:300]!r}")
+            page.wait_for_timeout(5000)
+
+        if found_second:
             self.progress(page, "Second Continuar screen visible - denominaciones confirmed!", context)
 
             error = self._click_continuar_until_advanced(page, second_marker, "second")
@@ -187,9 +202,16 @@ class VerifyDenominacionesStep(Step):
 
             self.progress(page, "Second Continuar completed", context)
         else:
+            # Dump HTML so we can see what the page actually shows
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".html", prefix="second_screen_missing_", delete=False
+            ) as f:
+                f.write(page.content())
+                logger.warning(f"Second screen HTML dumped to {f.name}")
+
             return StepResult(
                 status=StepStatus.FAILED,
-                message="Second Continuar screen not found after waiting for JS to render.",
+                message="Second Continuar screen not found after 5 poll attempts.",
             )
 
         # Dump page source so we can inspect the next (unknown) screen

@@ -64,6 +64,30 @@ class Step(ABC):
         logger.info(f"[{self.name}] {message}")
         page.wait_for_timeout(PROGRESS_PAUSE_SECONDS * 1000)
 
+    @staticmethod
+    def is_browser_error(page: Page) -> str | None:
+        """Check if the page is showing a browser-level error (connection timeout, etc.).
+
+        Returns the error description or None if the page looks normal.
+        """
+        try:
+            body = page.locator("body").inner_text()[:500]
+        except Exception:
+            return None
+        error_signals = [
+            "ERR_CONNECTION_TIMED_OUT",
+            "ERR_CONNECTION_REFUSED",
+            "ERR_CONNECTION_RESET",
+            "ERR_NAME_NOT_RESOLVED",
+            "ERR_INTERNET_DISCONNECTED",
+            "can't reach this page",
+            "This site can't be reached",
+        ]
+        for signal in error_signals:
+            if signal in body:
+                return signal
+        return None
+
     @contextmanager
     def capture_server_errors(self, page: Page):
         """Track 5xx HTTP responses during an action.
