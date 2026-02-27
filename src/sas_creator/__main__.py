@@ -56,7 +56,10 @@ def main() -> None:
         logger.exception(f"Fatal error: {e}")
         sys.exit(1)
     finally:
-        runner.browser_mgr.close()
+        try:
+            runner.browser_mgr.close()
+        except (KeyboardInterrupt, Exception):
+            pass
 
 
 if __name__ == "__main__":
