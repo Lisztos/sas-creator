@@ -1,5 +1,6 @@
 import logging
 import random
+import sys
 import time
 
 from sas_creator.browser import BrowserManager
@@ -11,6 +12,8 @@ from sas_creator.steps.registry import get_step_pipeline
 from sas_creator.takeover import TakeoverMonitor
 
 logger = logging.getLogger(__name__)
+
+MAINTENANCE_MARKER = "la plataforma de constitución de Sociedades por Acciones Simplificadas (SAS) por el momento no se encuentra disponible"
 
 
 class StepExecutionError(Exception):
@@ -47,6 +50,9 @@ class Runner:
             )
         except Exception:
             logger.warning("Initial navigation failed, will retry in login step")
+
+        self._check_maintenance(page)
+
         step_names = [s.name for s in self.steps]
         logger.info("")
         logger.info("=" * 60)
@@ -163,6 +169,8 @@ class Runner:
             attempt += 1
 
             try:
+                self._check_maintenance(page)
+
                 # Check if human already did this
                 if step.check_already_done(page):
                     logger.info(f"Step '{step.name}' already done (human).")
@@ -273,12 +281,26 @@ class Runner:
                     logger.warning(f"  .. Reload got {response.status}, retrying in 10s...")
                     page.wait_for_timeout(10000)
                     continue
+                self._check_maintenance(page)
                 logger.info("  .. Reload OK")
                 return
             except Exception:
                 logger.warning(f"  .. Reload failed (attempt {i}), retrying in 10s...")
                 page.wait_for_timeout(10000)
         logger.warning("  .. All reload attempts got errors, proceeding anyway")
+
+    def _check_maintenance(self, page) -> None:
+        """Abort immediately if the platform is in maintenance mode."""
+        try:
+            body = page.locator("body").inner_text(timeout=3000)
+            if MAINTENANCE_MARKER in body:
+                logger.error("")
+                logger.error("=" * 60)
+                logger.error("  PLATFORM IN MAINTENANCE - ABORTING")
+                logger.error("=" * 60)
+                sys.exit(1)
+        except Exception:
+            pass
 
     def _is_session_expired(self, page) -> bool:
         """Check if the session expired by looking for the login URL or form."""
