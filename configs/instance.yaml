@@ -1,0 +1,47 @@
+site:
+  base_url: "https://sas-tuempresa.economia.gob.mx/sas/inicio_basico.do"
+  page_load_timeout_ms: 300000
+  ajax_settle_timeout_ms: 300000
+  navigation_timeout_ms: 300000
+
+credentials:
+  cer_path: "./credentials/certificate.cer"
+  key_path: "./credentials/private-key.key"
+  # password loaded from env: FIEL_PASSWORD
+
+retry:
+  base_interval_seconds: 15
+  max_interval_seconds: 120
+  exponential_base: 2
+  jitter_seconds: 5
+  max_attempts: 0
+
+telegram:
+  # token loaded from env: TELEGRAM_BOT_TOKEN
+  chat_id: "1413270677"
+  notify_on_step_success: true
+  notify_on_error: true
+  notify_on_human_needed: true
+  send_screenshots: true
+
+browser:
+  headless: false
+  slow_mo_ms: 100
+  viewport_width: 1280
+  viewport_height: 900
+  user_data_dir: "./browser_data"
+  channel: ""  # Use bundled Chromium in Docker (no Edge)
+
+state:
+  state_file: "./state/run_state.json"
+  screenshot_dir: "./screenshots"
+
+logging:
+  level: "DEBUG"
+  file: "./logs/sas_creator.log"
+  max_bytes: 10485760
+  backup_count: 5
+
+instance:
+  name: "SAS Instance 1"
+  # novnc_base_url injected from NOVNC_BASE_URL env var

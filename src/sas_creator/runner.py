@@ -24,7 +24,7 @@ class Runner:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.state = RunState.load(config.state.state_file)
-        self.notifier = TelegramNotifier(config.telegram)
+        self.notifier = TelegramNotifier(config.telegram, config.instance)
         self.browser_mgr = BrowserManager(config.browser)
         self.steps = get_step_pipeline(config)
 
@@ -126,10 +126,10 @@ class Runner:
                     logger.info(f"  >> SKIPPED (human take-over)")
                 elif result.status == StepStatus.NEEDS_HUMAN:
                     logger.warning(f"  >> NEEDS HUMAN: {result.message}")
-                    self.notifier.send(
-                        f"HUMAN INTERVENTION NEEDED at step "
-                        f"'{step.display_name}': {result.message}",
-                        urgent=True,
+                    self.notifier.send_human_needed(
+                        step_name=step.display_name,
+                        message=result.message,
+                        screenshot_path=result.screenshot_path,
                     )
                     self._wait_for_human(step, page)
                     self.state.mark_completed(step.name)
@@ -150,9 +150,12 @@ class Runner:
         logger.info("=" * 60)
         logger.info("  PIPELINE COMPLETE")
         logger.info("=" * 60)
+        vnc_msg = ""
+        if self.notifier.novnc_url:
+            url = f"{self.notifier.novnc_url}/vnc.html?autoconnect=true"
+            vnc_msg = f"\n\n\U0001f449 [Open Browser]({url})"
         self.notifier.send(
-            "All automated steps completed! Browser is open for you to take over. "
-            "Press Ctrl+C in the terminal when you're done.",
+            f"All automated steps completed! Browser is open for you to take over.{vnc_msg}",
             urgent=True,
         )
         logger.info("Pipeline complete. Browser stays open. Press Ctrl+C to exit.")
@@ -217,6 +220,33 @@ class Runner:
                     return StepResult(
                         status=StepStatus.NEEDS_HUMAN,
                         message=f"Max retries ({cfg.max_attempts}) exceeded: {error_msg}",
+                        screenshot_path=screenshot_path,
+                    )
+
+                # Connection-level failures mean the page is dead — restart pipeline
+                is_connection_dead = any(
+                    marker in error_msg
+                    for marker in [
+                        "ERR_CONNECTION_TIMED_OUT",
+                        "ERR_CONNECTION_REFUSED",
+                        "ERR_CONNECTION_RESET",
+                        "ERR_NAME_NOT_RESOLVED",
+                        "ERR_INTERNET_DISCONNECTED",
+                        "ERR_TIMED_OUT",
+                        "net::ERR_",
+                    ]
+                )
+                if is_connection_dead:
+                    logger.warning(
+                        f"  !! Connection-level failure detected: {error_msg}"
+                    )
+                    logger.warning(
+                        "  !! Page is unreachable — signalling full pipeline restart"
+                    )
+                    return StepResult(
+                        status=StepStatus.FAILED,
+                        message=f"Connection dead: {error_msg}",
+                        data={"session_expired": True},
                         screenshot_path=screenshot_path,
                     )
 
@@ -324,7 +354,11 @@ class Runner:
         while True:
             if monitor.wait_for_human_or_timeout(step, timeout_seconds=300):
                 return
+            vnc_msg = ""
+            if self.notifier.novnc_url:
+                url = f"{self.notifier.novnc_url}/vnc.html?autoconnect=true"
+                vnc_msg = f"\n\U0001f449 [Open Browser]({url})"
             self.notifier.send(
-                f"Still waiting for human at step '{step.display_name}'...",
+                f"Still waiting for human at step '{step.display_name}'...{vnc_msg}",
                 urgent=False,
             )

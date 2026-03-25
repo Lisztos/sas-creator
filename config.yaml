@@ -1,5 +1,5 @@
 site:
-  base_url: "https://sas-tuempresa.economia.gob.mx/sas/"
+  base_url: "https://sas-tuempresa.economia.gob.mx/sas/inicio_basico.do"
   page_load_timeout_ms: 300000
   ajax_settle_timeout_ms: 300000
   navigation_timeout_ms: 300000

@@ -1,0 +1,70 @@
+x-sas-common: &sas-common
+  build: .
+  environment: &sas-env
+    FIEL_PASSWORD: ${FIEL_PASSWORD}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    VNC_PASSWORD: ${VNC_PASSWORD:-}
+  restart: unless-stopped
+
+services:
+  sas-instance-1:
+    <<: *sas-common
+    environment:
+      <<: *sas-env
+      INSTANCE_NAME: "SAS 1"
+      NOVNC_BASE_URL: "http://${SERVER_IP:-localhost}:6081"
+    ports:
+      - "6081:6080"
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./configs/instance.yaml:/app/config.yaml:ro
+      - instance-1-state:/app/state
+      - instance-1-screenshots:/app/screenshots
+      - instance-1-browser:/app/browser_data
+      - instance-1-logs:/app/logs
+
+  sas-instance-2:
+    <<: *sas-common
+    environment:
+      <<: *sas-env
+      INSTANCE_NAME: "SAS 2"
+      NOVNC_BASE_URL: "http://${SERVER_IP:-localhost}:6082"
+    ports:
+      - "6082:6080"
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./configs/instance.yaml:/app/config.yaml:ro
+      - instance-2-state:/app/state
+      - instance-2-screenshots:/app/screenshots
+      - instance-2-browser:/app/browser_data
+      - instance-2-logs:/app/logs
+
+  sas-instance-3:
+    <<: *sas-common
+    environment:
+      <<: *sas-env
+      INSTANCE_NAME: "SAS 3"
+      NOVNC_BASE_URL: "http://${SERVER_IP:-localhost}:6083"
+    ports:
+      - "6083:6080"
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./configs/instance.yaml:/app/config.yaml:ro
+      - instance-3-state:/app/state
+      - instance-3-screenshots:/app/screenshots
+      - instance-3-browser:/app/browser_data
+      - instance-3-logs:/app/logs
+
+volumes:
+  instance-1-state:
+  instance-1-screenshots:
+  instance-1-browser:
+  instance-1-logs:
+  instance-2-state:
+  instance-2-screenshots:
+  instance-2-browser:
+  instance-2-logs:
+  instance-3-state:
+  instance-3-screenshots:
+  instance-3-browser:
+  instance-3-logs:

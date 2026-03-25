@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -18,8 +20,18 @@ class BrowserManager:
 
         self._playwright = sync_playwright().start()
 
+        args = []
+        # Only open DevTools when running locally (not in Xvfb/Docker)
+        if not os.environ.get("DISPLAY", "").startswith(":"):
+            args.append("--auto-open-devtools-for-tabs")
+        # Required when running as root in Docker
+        if Path("/.dockerenv").exists():
+            args.append("--no-sandbox")
+
+        channel = self.config.channel if self.config.channel else None
+
         self._context = self._playwright.chromium.launch_persistent_context(
-            channel="msedge",
+            channel=channel,
             user_data_dir=self.config.user_data_dir,
             headless=self.config.headless,
             slow_mo=self.config.slow_mo_ms,
@@ -29,7 +41,7 @@ class BrowserManager:
             },
             locale="es-MX",
             timezone_id="America/Mexico_City",
-            args=["--auto-open-devtools-for-tabs"],
+            args=args,
         )
 
         if self._context.pages:

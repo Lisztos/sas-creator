@@ -50,6 +50,12 @@ class BrowserConfig(BaseModel):
     viewport_width: int = 1280
     viewport_height: int = 900
     user_data_dir: str = "./browser_data"
+    channel: str = "msedge"
+
+
+class InstanceConfig(BaseModel):
+    name: str = "default"
+    novnc_base_url: str = ""
 
 
 class StateConfig(BaseModel):
@@ -72,6 +78,7 @@ class AppConfig(BaseModel):
     browser: BrowserConfig = BrowserConfig()
     state: StateConfig = StateConfig()
     logging: LoggingConfig = LoggingConfig()
+    instance: InstanceConfig = InstanceConfig()
 
 
 def load_config(config_path: str = "config.yaml") -> AppConfig:
@@ -88,5 +95,13 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     if "telegram" not in raw:
         raw["telegram"] = {}
     raw["telegram"]["token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+    # Inject instance config from environment
+    if "instance" not in raw:
+        raw["instance"] = {}
+    raw["instance"].setdefault("name", os.environ.get("INSTANCE_NAME", "default"))
+    raw["instance"].setdefault(
+        "novnc_base_url", os.environ.get("NOVNC_BASE_URL", "")
+    )
 
     return AppConfig(**raw)
