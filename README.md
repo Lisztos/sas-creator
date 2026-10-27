@@ -1,4 +1,8 @@
-# SAS Creator Bot
+<p align="center">
+  <img src="assets/logo.png" alt="SAS Creator Bot logo" width="240">
+</p>
+
+<h1 align="center">SAS Creator Bot</h1>
 
 Automated browser agent for creating an SAS (Sociedad por Acciones Simplificada) company on [tuempresa.gob.mx](https://www.tuempresa.gob.mx/sas/).
 
